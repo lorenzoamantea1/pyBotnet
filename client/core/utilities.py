@@ -3,6 +3,7 @@ from threading import Thread
 from typing import Optional, Callable, List, Tuple
 from urllib.parse import urlparse
 import base64
+import ipaddress
 
 # Utility function to decode Base64 strings
 def _decode_str(encoded: str) -> str:
@@ -15,6 +16,15 @@ def parse_url(url: str):
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.hostname:
         return None
+
+    # Reject private/reserved IP addresses to avoid local network abuse
+    try:
+        host_ip = ipaddress.ip_address(parsed.hostname)
+        if host_ip.is_private or host_ip.is_loopback or host_ip.is_multicast or host_ip.is_reserved:
+            return None
+    except ValueError:
+        # hostname is not an IP literal, allow domain names
+        pass
 
     port = parsed.port or (443 if parsed.scheme.lower() == _decode_str("aHR0cHM=") else 80)
     path = parsed.path if parsed.path else _decode_str("Lw==")

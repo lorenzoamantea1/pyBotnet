@@ -18,7 +18,7 @@ NODES_FILE_PATH = Path("data/nodes.network")
 BUFFER_SIZE_LENGTH = 2
 SOCKET_TIMEOUT = 5.0
 CLIENT_POLL_INTERVAL = 1.0
-NODE_COMMANDS = {"status", "sync_nodes", "get_clients"}
+NODE_COMMANDS = {"status", "sync_nodes", "get_clients", "disconnect_client"}
 
 class Node:
     def __init__(
@@ -320,13 +320,33 @@ class Node:
             
             elif action == "get_clients":
                 clients = self.get_clients()
-                data = {"data": {}}
-                for client in clients:
-                    data["status"] = "success"
-                    data["data"][client[1]["uuid"]] = {
-                        "addr": client[0].getpeername()
+                data = {"status": "success", "data": {}}
+                for client_socket_item, client_data in clients:
+                    data["data"][client_data["uuid"]] = {
+                        "addr": client_socket_item.getpeername()
                     }
                 self.send_to(client_socket, json.dumps(data), True)
+
+            elif action == "disconnect_client":
+                client_id = msg_data.get("data", {}).get("client_id")
+                if not client_id:
+                    self.send_to(client_socket, json.dumps({"status": "error", "message": "client_id required"}), True)
+                    return
+
+                with self.clients_lock:
+                    target = None
+                    for c_socket, c_data in list(self.clients.items()):
+                        if c_data.get("uuid") == client_id:
+                            target = c_socket
+                            break
+
+                if not target:
+                    self.send_to(client_socket, json.dumps({"status": "error", "message": "client not found"}), True)
+                    return
+
+                self.logger.info(f"Disconnecting client {client_id} as requested by {addr}")
+                self.disconnect_connection(target, self.get_address(target))
+                self.send_to(client_socket, json.dumps({"status": "success", "message": f"Disconnected {client_id}"}), True)
 
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid controller JSON from {addr}: {e}")
@@ -335,14 +355,18 @@ class Node:
 
     def _sync_nodes(self, nodes: List[str]) -> None:
         try:
-            with NODES_FILE_PATH.open("r+") as f:
+            if not NODES_FILE_PATH.exists():
+                NODES_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                NODES_FILE_PATH.write_text("")
+
+            with NODES_FILE_PATH.open("r", encoding="utf-8") as f:
                 existing_nodes = set(line.strip() for line in f if line.strip())
-                new_nodes = [node for node in nodes if node not in existing_nodes]
-                if new_nodes:
+
+            new_nodes = [node for node in nodes if node not in existing_nodes]
+            if new_nodes:
+                with NODES_FILE_PATH.open("a", encoding="utf-8") as f:
                     f.write("\n".join(new_nodes) + "\n")
-                    self.logger.info(f"Added {len(new_nodes)} nodes to {NODES_FILE_PATH}")
-        except FileNotFoundError:
-            self.logger.error(f"{NODES_FILE_PATH} missing")
+                self.logger.info(f"Added {len(new_nodes)} nodes to {NODES_FILE_PATH}")
         except IOError as e:
             self.logger.error(f"Node sync failed: {e}")
 

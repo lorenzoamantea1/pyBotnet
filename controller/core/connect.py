@@ -221,26 +221,43 @@ class Controller:
         length_bytes = self.receive_bytes(node_data["socket"], 2)
         if not length_bytes:
             self.logger.info("Server closed connection")
+            return None
 
         encrypted_session_key_len = int.from_bytes(length_bytes, 'big')
+        if encrypted_session_key_len <= 0 or encrypted_session_key_len > 4096:
+            self.logger.warning(f"Invalid session key length: {encrypted_session_key_len}")
+            return None
+
         encrypted_session_key = self.receive_bytes(node_data["socket"], encrypted_session_key_len)
         if not encrypted_session_key:
             self.logger.warning("Failed to receive session key")
+            return None
 
         # Receive encrypted message
         length_bytes = self.receive_bytes(node_data["socket"], 2)
         if not length_bytes:
             self.logger.warning("Failed to receive message length")
+            return None
 
         encrypted_msg_len = int.from_bytes(length_bytes, 'big')
+        if encrypted_msg_len <= 0 or encrypted_msg_len > 10 * 1024 * 1024:
+            self.logger.warning(f"Invalid message length: {encrypted_msg_len}")
+            return None
+
         encrypted_msg = self.receive_bytes(node_data["socket"], encrypted_msg_len)
         if not encrypted_msg:
             self.logger.warning("Failed to receive message")
+            return None
 
         # Decrypt message
-        session_key = self.crypto.rsa_decrypt(self.private_key, encrypted_session_key)
-        message = self.crypto.aes_decrypt(session_key, encrypted_msg).decode()
-        self.logger.info(f"Received message from {node_data["uuid"]}")
+        try:
+            session_key = self.crypto.rsa_decrypt(self.private_key, encrypted_session_key)
+            message = self.crypto.aes_decrypt(session_key, encrypted_msg).decode()
+        except Exception as e:
+            self.logger.error(f"Decryption failed: {type(e).__name__}: {e}")
+            return None
+
+        self.logger.info(f"Received message from {node_data['uuid']}")
         return message
 
     def send_to_all(self, message):
@@ -255,7 +272,14 @@ class Controller:
         responses = {}
         for node_id, _ in nodes:
             resp = self.send_to(node_id, message)
-            responses[node_id] = json.loads(resp)
+            if isinstance(resp, str):
+                try:
+                    responses[node_id] = json.loads(resp)
+                except (json.JSONDecodeError, TypeError):
+                    self.logger.warning(f"Invalid JSON response from node {node_id}: {resp}")
+                    responses[node_id] = {"status": "error", "message": "invalid JSON response", "raw": str(resp)}
+            else:
+                responses[node_id] = {"status": "error", "message": "no response from node"}
 
         return responses, True
 

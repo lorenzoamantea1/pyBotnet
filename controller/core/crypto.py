@@ -1,5 +1,6 @@
 import os
 import logging
+from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -51,17 +52,31 @@ class Crypto:
 
     # Load RSA keys from files
     def load_rsa_keys(self):
+        keys_path = Path("data/keys")
+        keys_path.mkdir(parents=True, exist_ok=True)
+
+        pub_path = keys_path / "pub.key"
+        priv_path = keys_path / "priv.key"
+
         try:
-            with open("data/keys/pub.key", "rb") as f:
+            with pub_path.open("rb") as f:
                 pub = self.load_public_key(f.read())
-            with open("data/keys/priv.key", "rb") as f:
+            with priv_path.open("rb") as f:
                 priv = self.load_private_key(f.read())
-        except:
+            self.logger.debug("Loaded existing RSA keys")
+        except (FileNotFoundError, ValueError, OSError) as e:
+            self.logger.warning(f"Failed to load existing keys ({e}), generating new keys")
             priv, pub = self.generate_rsa_keys()
-            with open("data/keys/pub.key", "w") as f:
-                f.write(self.serialize_public_key(pub).decode())
-            with open("data/keys/priv.key", "w") as f:
-                f.write(self.serialize_private_key(priv).decode())
+            with pub_path.open("wb") as f:
+                f.write(self.serialize_public_key(pub))
+            with priv_path.open("wb") as f:
+                f.write(self.serialize_private_key(priv))
+            try:
+                os.chmod(pub_path, 0o600)
+                os.chmod(priv_path, 0o600)
+            except OSError:
+                self.logger.warning("Could not set key file permissions")
+
         return priv, pub
         
     #  Sign and Verify 

