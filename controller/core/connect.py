@@ -94,7 +94,7 @@ class Controller:
     def _send_controller_public_key(self, client_socket, host, port):
         try:
             pubkey_pem = self.crypto.serialize_public_key(self.public_key)
-            client_socket.send(len(pubkey_pem).to_bytes(2, 'big') + pubkey_pem)
+            client_socket.sendall(len(pubkey_pem).to_bytes(2, 'big') + pubkey_pem)
             return True
         except socket.error as e:
             self.logger.error(f"Failed to send public key to {host}:{port}: {type(e).__name__}: {e}")
@@ -106,7 +106,7 @@ class Controller:
             auth_msg = json.dumps({"role": "controller"}).encode()
             signature = self.crypto.sign(self.private_key, auth_msg)
             auth_payload = json.dumps({"role": "controller", "signature": signature.hex()}).encode()
-            client_socket.send(len(auth_payload).to_bytes(2, 'big') + auth_payload)
+            client_socket.sendall(len(auth_payload).to_bytes(2, 'big') + auth_payload)
 
             length_bytes = self.receive_bytes(client_socket, 2)
             if not length_bytes:
@@ -205,8 +205,8 @@ class Controller:
             message_bytes = message.encode()
             signature = self.crypto.sign(self.private_key, message_bytes)
 
-            client_socket.send(len(message_bytes).to_bytes(2, 'big') + message_bytes)
-            client_socket.send(len(signature).to_bytes(2, 'big') + signature)
+            client_socket.sendall(len(message_bytes).to_bytes(2, 'big') + message_bytes)
+            client_socket.sendall(len(signature).to_bytes(2, 'big') + signature)
 
             self.logger.info(f"Sent message to node {node_id}")
             self.logger.debug(message)

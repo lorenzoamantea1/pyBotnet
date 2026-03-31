@@ -167,7 +167,7 @@ class Node:
     def _exchange_public_keys(self, client_socket: socket.socket, addr: Tuple[str, int]) -> Optional[str]:
         pubkey_pem = self.crypto.serialize_public_key(self.public_key)
         try:
-            client_socket.send(len(pubkey_pem).to_bytes(BUFFER_SIZE_LENGTH, "big") + pubkey_pem)
+            client_socket.sendall(len(pubkey_pem).to_bytes(BUFFER_SIZE_LENGTH, "big") + pubkey_pem)
             self.logger.debug(f"Sent public key to {addr}")
         except socket.error as e:
             self.logger.error(f"Failed to send public key to {addr}: {e}")
@@ -433,7 +433,7 @@ class Node:
         addr = self.get_address(client_socket)
         try:
             message_bytes = json.dumps(message).encode()
-            client_socket.send(len(message_bytes).to_bytes(BUFFER_SIZE_LENGTH, "big") + message_bytes)
+            client_socket.sendall(len(message_bytes).to_bytes(BUFFER_SIZE_LENGTH, "big") + message_bytes)
             self.logger.info(f"Confirmation sent to {addr}: {message}")
         except socket.error as e:
             self.logger.warning(f"Confirmation send failed to {addr}: {e}")

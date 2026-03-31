@@ -50,7 +50,7 @@ class L7:
                             req = req_parts[0] + b"\r\n" + header_section + b"\r\n\r\n" + req_parts[1]
                     else:
                         req += header_section + b"\r\n\r\n"
-                s.send(req)
+                s.sendall(req)
                 s.recv(4096)
 
     def GET(self, headers: Optional[Dict[str, str]] = None, body: str = "", body_len: int = 256, random_ip: str = None) -> None:

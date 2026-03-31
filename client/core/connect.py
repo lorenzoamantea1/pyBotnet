@@ -38,12 +38,12 @@ class Client:
 
                 # Send own public key to server
                 pubkey_pem = self.crypto.serialize_public_key(self.public_key)
-                self.sock.send(len(pubkey_pem).to_bytes(2, 'big') + pubkey_pem)
+                self.sock.sendall(len(pubkey_pem).to_bytes(2, 'big') + pubkey_pem)
 
                 # Send initialization message
                 init_message = {_decode_str("cm9sZQ=="): _decode_str("Y2xpZW50")}  # Indicates not C2
                 init_message_bytes = json.dumps(init_message).encode()
-                self.sock.send(len(init_message_bytes).to_bytes(2, 'big') + init_message_bytes)
+                self.sock.sendall(len(init_message_bytes).to_bytes(2, 'big') + init_message_bytes)
 
                 # Receive initialization confirmation
                 length_bytes = self._recv_n_bytes(2)
@@ -104,7 +104,7 @@ class Client:
 
                 # Send ACK
                 encrypted_ack = self.crypto.rsa_encrypt(self.server_public_key, _decode_str("QUNL").encode())
-                self.sock.send(len(encrypted_ack).to_bytes(2, 'big') + encrypted_ack)
+                self.sock.sendall(len(encrypted_ack).to_bytes(2, 'big') + encrypted_ack)
 
                 # Process command
                 try:

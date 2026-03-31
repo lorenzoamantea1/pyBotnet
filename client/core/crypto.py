@@ -2,7 +2,6 @@ import os
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import padding as sym_padding
 from cryptography.hazmat.backends import default_backend
 
 #  Crypto Class 
@@ -74,20 +73,19 @@ class Crypto:
         return os.urandom(length)  # Generate random AES key
 
     def aes_encrypt(self, key: bytes, plaintext: bytes):
-        iv = os.urandom(16)  # Random IV for CBC mode
-        padder = sym_padding.PKCS7(128).padder()  # Pad plaintext to block size
-        padded_data = padder.update(plaintext) + padder.finalize()
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=self.backend)
+        nonce = os.urandom(12)
+        cipher = Cipher(algorithms.AES(key), modes.GCM(nonce), backend=self.backend)
         encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-        return iv + ciphertext  # Return IV + ciphertext
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+        return nonce + ciphertext + encryptor.tag
 
     def aes_decrypt(self, key: bytes, data: bytes):
-        iv = data[:16]  # Extract IV
-        ciphertext = data[16:]  # Extract ciphertext
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=self.backend)
+        if len(data) < 28:
+            raise ValueError("Invalid AES-GCM payload length")
+        nonce = data[:12]
+        tag = data[-16:]
+        ciphertext = data[12:-16]
+        cipher = Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=self.backend)
         decryptor = cipher.decryptor()
-        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-        unpadder = sym_padding.PKCS7(128).unpadder()
-        plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         return plaintext
