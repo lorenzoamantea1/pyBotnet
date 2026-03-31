@@ -10,43 +10,68 @@
 
 > Questo repository è destinato all'analisi del codice. L'esecuzione in ambienti non autorizzati può violare leggi o policy.
 
-## 🧩 Struttura del progetto
+## 🧩 Architettura
+
+```mermaid
+flowchart LR
+    CTRL[Controller]
+    NODE[Node]
+    CLIENT[Client]
+
+    CTRL -->|RSA pubkey + auth| NODE
+    NODE -->|AES-encrypted commands| CLIENT
+    CLIENT -->|ACK / status| NODE
+    NODE -->|JSON response| CTRL
+```
+
+## 🧱 Struttura del progetto
 
 - `client/`
   - `main.py` - avvia il client.
-  - `core/connect.py` - gestisce la connessione sicura al nodo.
-  - `core/crypto.py` - funzioni di crittografia per client.
-  - `core/layers.py` - metodi di generazione traffico (L7/L4/L3).
-  - `core/utilities.py` - parsing URL, utilità di rete e decoding Base64.
+  - `core/connect.py` - connessione sicura al nodo e ciclo comandi.
+  - `core/crypto.py` - funzioni RSA/AES per il client.
+  - `core/layers.py` - metodi di generazione traffico L7/L4/L3.
+  - `core/utilities.py` - parsing URL, whitelisting IP e utilità di rete.
 
 - `controller/`
   - `main.py` - carica i nodi e avvia la shell interattiva.
-  - `core/connect.py` - connessioni ai nodi, scambio chiavi e messaggi.
-  - `core/crypto.py` - RSA/AES per la console.
-  - `core/logger.py` - logger standardizzato.
-  - `core/errors.py` - gestione delle eccezioni globali.
-  - `core/shell.py` - shell testuale e comandi disponibili.
-  - `data/nodes.json` - elenco di nodi configurati.
+  - `core/connect.py` - connessione ai nodi, autenticazione e invio messaggi.
+  - `core/crypto.py` - gestione chiavi RSA e firma messaggi.
+  - `core/logger.py` - logger colorato e uniforme.
+  - `core/errors.py` - eccezioni globali.
+  - `core/shell.py` - shell interattiva con comandi e autocomplete.
+  - `core/banners.json` - banner testuali per la shell.
+  - `data/nodes.json` - elenco dei nodi di destinazione.
 
 - `node/`
-  - `main.py` - legge configurazione e avvia il nodo.
-  - `core/server.py` - implementazione del server nodo.
-  - `core/crypto.py` - crittografia e chiavi del nodo.
-  - `core/logger.py` - logger per il nodo.
+  - `main.py` - carica la configurazione e avvia il server.
+  - `core/server.py` - logica di connessione, autenticazione e forwarding.
+  - `core/crypto.py` - crittografia del nodo.
+  - `core/logger.py` - logger del nodo.
   - `core/errors.py` - eccezioni del nodo.
-  - `data/config.json` - configurazione runtime del nodo.
-  - `data/nodes.network` - elenco nodi sincronizzati.
+  - `data/config.json` - impostazioni runtime.
+  - `data/nodes.network` - nodi sincronizzati.
 
-- `requirements.txt` - dipendenze Python.
+- `requirements.txt` - dipendenze python.
+- `LICENSE` - licenza del progetto (GNU GPL v3).
 
-## 🔗 Architettura e flusso dati
+## 🔗 Flusso dati
 
-1. Il `controller` legge la lista dei nodi da `controller/data/nodes.json`.
-2. Si connette a ogni nodo e scambia chiavi RSA.
-3. Il `nodo` autentica il controller tramite firma RSA.
-4. Il controller invia comandi JSON firmati ai nodi.
-5. Il nodo esegue comandi di controllo o inoltra istruzioni ai client con AES.
-6. Il `client` riceve comandi cifrati e li esegue.
+```mermaid
+sequenceDiagram
+    participant Controller
+    participant Node
+    participant Client
+
+    Controller->>Node: connessione TCP
+    Node->>Controller: invia public key PEM
+    Controller->>Node: invia public key PEM
+    Controller->>Node: auth firmata
+    Node-->>Controller: conferma autenticazione
+    Node->>Client: invia comando AES+RSA
+    Client-->>Node: ACK crittografato
+    Node-->>Controller: risposta JSON opzionale
+```
 
 ## ⚙️ Configurazione
 
@@ -64,11 +89,11 @@
 
 `node/data/config.json`
 
-- `address.host` - indirizzo di bind del nodo.
-- `address.port` - porta TCP del nodo.
-- `clients.max_clients` - massimo client collegabili.
-- `clients.client_overflow_sleep_s` - tempo di attesa per overflow.
-- `debug` - attiva logging dettagliato.
+- `address.host` - indirizzo di bind.
+- `address.port` - porta TCP.
+- `clients.max_clients` - massimo numero di client.
+- `clients.client_overflow_sleep_s` - intervallo di attesa per overflow.
+- `debug` - abilita logging dettagliato.
 
 Esempio:
 
@@ -144,66 +169,70 @@ python3 main.py
 
 Il client predefinito si connette a `127.0.0.1:547`.
 
-## 🧠 Controller: comandi disponibili
+## 🧠 Comandi del controller
 
-- `help [command]` — mostra i comandi disponibili.
+- `help [command]` — mostra i comandi.
 - `quit` / `exit` — esce dalla shell.
 - `ping` — ping a tutti i nodi connessi.
-- `nodes list` — visualizza i nodi connessi.
+- `nodes list` — elenca i nodi connessi.
 - `nodes status` — verifica lo stato dei nodi.
-- `nodes sync` — sincronizza la lista dei nodi sui nodi remoti.
+- `nodes sync` — sincronizza la lista dei nodi.
 - `nodes disconnect <node_id>` — disconnette un nodo.
-- `clients list` — elenca i client registrati sui nodi.
+- `clients list` — elenca i client noti dai nodi.
 - `clients disconnect <node_id> <client_id>` — disconnette un client.
-- `flood <url> [duration] [method] [threads]` — invia un comando flood.
-- `methods` — lista dei metodi supportati.
-- `! <command>` — esegue comando shell (solo admin).
+- `flood <url> [duration] [method] [threads]` — invia un comando di attacco.
+- `methods` — mostra i metodi supportati.
+- `! <command>` — esegue un comando shell (solo admin).
 
-## 🌐 Metodi supportati per flood
+## 🌐 Metodi flood supportati
 
 - Layer 7: `GET`, `POST`, `PUT`, `DELETE`, `HEAD`, `DNS`
 - Layer 4: `ACK`, `SYN`, `FIN`, `RST`, `TCP`, `UDP`
 - Layer 3: `ICMP`
 
-## 🔧 Dettagli del nodo
+## 🔧 Comportamento del nodo
 
-Il nodo:
-
-- scambia la propria chiave pubblica con ogni connessione.
+- invia la sua chiave pubblica a ogni connessione.
 - verifica la firma del controller.
-- gestisce comandi di controllo (`status`, `sync_nodes`, `get_clients`, `disconnect_client`).
-- inoltra altri messaggi ai client con AES.
-- se supera `max_clients`, invia un comando `wait` o `redirect` ai client in overflow.
+- gestisce comandi di controllo: `status`, `sync_nodes`, `get_clients`, `disconnect_client`.
+- inoltra altri messaggi verso i client con AES.
+- se il limite di client è superato, invia `wait` o `redirect`.
 
-`node/data/nodes.network` conserva nodi sincronizzati ricevuti dal controller.
+`node/data/nodes.network` contiene i nodi sincronizzati.
 
-## 🚀 Dettagli del client
+## 🚀 Comportamento del client
 
-Il client:
-
-- si connette al nodo specificato.
+- si connette al nodo configurato.
 - riceve la chiave pubblica del nodo.
 - invia la propria chiave pubblica.
-- invia un messaggio iniziale di identificazione come client.
-- riceve comandi cifrati e li decifra.
+- invia il messaggio iniziale di identificazione.
+- riceve e decripta comandi AES.
 - gestisce i comandi:
-  - `flood` — esegue attacchi di rete.
+  - `flood` — esegue traffico di rete.
   - `redirect` — si riconnette a un altro nodo.
   - `wait` — attende e si riconnette.
 
 ## 🧪 Protocollo di comunicazione
 
-- I messaggi usano un prefisso di 2 byte per la lunghezza.
-- Il nodo invia pubbliche chiavi in formato PEM.
-- Le sessioni AES sono cifrate con RSA.
-- I comandi principali sono JSON.
+- i messaggi hanno un prefisso a 2 byte con la lunghezza.
+- le chiavi pubbliche sono in PEM.
+- le sessioni AES sono cifrate con RSA.
+- i comandi sono payload JSON.
 
-## ⚠️ Note importanti
+## ⚠️ Avvertenze
 
-- Per il funzionamento completo, la chiave pubblica del controller deve essere disponibile al nodo.
-- `scapy` può richiedere privilegi di root per pacchetti raw.
-- `client` usa URL e ip non riservati per evitare loop su reti interne.
+- il nodo richiede `node/data/keys/pub.key` per autenticare il controller.
+- `scapy` può richiedere permessi di root per operazioni raw.
+- il client evita IP riservati e loop su reti interne.
 
 ## 📄 Licenza
 
-Nessuna licenza è specificata in questo repository.
+Questo progetto è distribuito sotto la licenza **GNU General Public License v3**.
+Consulta il file `LICENSE` per il testo completo.
+
+## 📌 Note finali
+
+- `controller/data/nodes.json` definisce i nodi target.
+- `node/data/config.json` definisce il runtime del nodo.
+- `node/data/nodes.network` memorizza i nodi sincronizzati.
+- `controller/data/keys/` viene creato automaticamente dal controller.
