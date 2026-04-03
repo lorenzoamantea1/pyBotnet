@@ -1,3 +1,5 @@
 cryptography
 colorama
 scapy
+aiohttp
+h2
