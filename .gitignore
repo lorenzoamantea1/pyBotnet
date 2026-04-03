@@ -1,6 +1,5 @@
 __pycache__/
 *.pyc
-pub.key
-priv.key
+
 */builder.py
 */onefile.py
